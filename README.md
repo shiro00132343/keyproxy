@@ -82,20 +82,32 @@ curl -fsSL https://raw.githubusercontent.com/shiro00132343/llm-proxy-run/main/in
 llm-proxy init
 ```
 
-このような質問が出てきます。
+このような画面が出てきます。
 
 ```
 llm-proxy セットアップ
-APIキーをセキュアな場所に保存します。
+APIキーをセキュアな場所 [~/.llm-proxy] に保存します。
 
 プロキシのポート番号 [4000]:
 ```
 
 ▶ **ポート番号はそのままEnterでOKです。**
 
+次に、登録済みのAPIキー一覧が表示されます（初回は「なし」）。
+
 ```
-Anthropic (Claude)
-  APIキー（例: sk-ant-...）:
+登録済みのAPIキー:
+  (なし)
+
+操作: サービス名を入力して追加・更新 / [d 番号] で削除 / [Enter] で完了
+>
+```
+
+▶ **使いたいサービス名を入力してEnterを押します。**
+
+```
+> Anthropic
+  APIキー:
 ```
 
 ▶ **ここに本物のAPIキーを入力します。**
@@ -103,17 +115,27 @@ Anthropic (Claude)
 Enterを押して進みます。
 
 ```
-OpenAI (GPT)
-  APIキー [スキップする場合はEnter]:
+[OK] Anthropic を保存しました
+
+登録済みのAPIキー:
+  1. ANTHROPIC: sk-ant-a...
+
+操作: サービス名を入力して追加・更新 / [d 番号] で削除 / [Enter] で完了
+>
 ```
 
-▶ **OpenAIのAPIキーを持っていない場合はそのままEnterを押してください。**
+▶ **他にも登録したいサービスがあれば続けて入力できます。**
+終わったら何も入力せずEnterを押してください。
 
 ```
-設定を保存しました！
+[OK] 設定を保存しました
 ```
 
 これで登録完了です。**本物のAPIキーはあなたのパソコンの安全な場所に保存されました。**
+
+> **キーの追加・削除もいつでもできます：**
+> - 追加・更新：`llm-proxy init` でサービス名を入力
+> - 削除：`llm-proxy init` で `d 番号` を入力（例: `d 1`）
 
 ---
 
@@ -201,18 +223,24 @@ llm-proxy start
 
 ## 対応しているサービス
 
+`llm-proxy init` でサービス名を自由に入力できるため、**任意のサービスのAPIキーを管理できます。**
+
+以下のサービスはモデル名のルーティングが組み込まれており、特別な設定なしで使用できます。
+
 | サービス | 説明 |
 |---|---|
-| Anthropic (Claude) | Claude Code、Antigravityなどに対応 |
-| OpenAI (GPT) | GPT-4o、o1などに対応 |
-| Google (Gemini) | Gemini 1.5 Pro/Flashなどに対応 |
-| xAI (Grok) | Grok-2などに対応 |
-| Mistral AI | Mistral Large/Smallなどに対応 |
+| Anthropic | Claude Code、Antigravityなどに対応 |
+| OpenAI | GPT-4o、o1などに対応 |
+| Google | Gemini 1.5 Pro/Flashなどに対応 |
+| xAI | Grok-2などに対応 |
+| Mistral | Mistral Large/Smallなどに対応 |
 | Cohere | Command R+などに対応 |
 | DeepSeek | DeepSeek Chat/R1などに対応 |
 | Groq | Llama3、Mixtralなどに対応（高速推論） |
 | Perplexity | ネット検索付きAIに対応 |
-| Together AI | オープンソースモデルに対応 |
+| Together | オープンソースモデルに対応 |
+
+上記以外のサービスも `llm-proxy init` でサービス名とAPIキーを入力するだけで登録・保管できます。
 
 ---
 
@@ -242,7 +270,9 @@ llm-proxy logs
 - **Pythonが入っていない** → [python.org](https://www.python.org/downloads/) からインストール
 - **ポートが使用中** → `llm-proxy init` を実行して別の番号（例: 4001）に変える
 
-### APIキーを変更したい
+### APIキーを変更・追加・削除したい
+
+プロキシを止めてから `init` を実行し、また起動します。
 
 ```bash
 llm-proxy stop
@@ -250,7 +280,10 @@ llm-proxy init
 llm-proxy start
 ```
 
-この3つを順番に実行してください。
+`llm-proxy init` の画面では：
+- サービス名を入力 → 新しいキーを入力（追加・更新）
+- `d 番号` を入力（削除）
+- 空Enterで完了・保存
 
 ---
 
@@ -351,37 +384,58 @@ Next steps:
 llm-proxy init
 ```
 
-You'll be asked a series of questions:
+You'll see:
 
 ```
 llm-proxy setup
-Saving API keys to a secure location.
+Saving API keys to a secure location [~/.llm-proxy].
 
 Proxy port number [4000]:
 ```
 
 ▶ **Just press Enter to use the default port.**
 
+Your registered keys are shown (empty on first run), then you enter an interactive prompt:
+
 ```
-Anthropic (Claude)
-  API key (e.g. sk-ant-...):
+Registered API keys:
+  (none)
+
+Action: type a service name to add/update / [d N] to delete / [Enter] to finish
+>
+```
+
+▶ **Type the name of the service you want to add, then press Enter.**
+
+```
+> Anthropic
+  API key:
 ```
 
 ▶ **Enter your real API key here.**
 Characters won't appear on screen as you type — that's normal. Press Enter when done.
 
 ```
-OpenAI (GPT)
-  API key [press Enter to skip]:
+[OK] Anthropic saved
+
+Registered API keys:
+  1. ANTHROPIC: sk-ant-a...
+
+Action: type a service name to add/update / [d N] to delete / [Enter] to finish
+>
 ```
 
-▶ **Press Enter to skip if you don't have an OpenAI key.**
+▶ **Add more services if needed, or just press Enter to finish.**
 
 ```
-Settings saved!
+[OK] Settings saved
 ```
 
 Done. **Your real API key is now stored safely on your machine.**
+
+> **You can add, update, or delete keys at any time:**
+> - Add/update: run `llm-proxy init` and type a service name
+> - Delete: run `llm-proxy init` and type `d N` (e.g. `d 1`)
 
 ---
 
@@ -464,18 +518,24 @@ That's it. You only need to run `llm-proxy init` once.
 
 ## Supported services
 
+Since `llm-proxy init` lets you type any service name, **you can store API keys for any service.**
+
+The following services have built-in model routing and work out of the box:
+
 | Service | Details |
 |---|---|
-| Anthropic (Claude) | Claude Code, Antigravity, and more |
-| OpenAI (GPT) | GPT-4o, o1, o3-mini, and more |
-| Google (Gemini) | Gemini 1.5 Pro/Flash, Gemini 2.0, and more |
-| xAI (Grok) | Grok-2 and more |
-| Mistral AI | Mistral Large/Small, Codestral, and more |
+| Anthropic | Claude Code, Antigravity, and more |
+| OpenAI | GPT-4o, o1, o3-mini, and more |
+| Google | Gemini 1.5 Pro/Flash, Gemini 2.0, and more |
+| xAI | Grok-2 and more |
+| Mistral | Mistral Large/Small, Codestral, and more |
 | Cohere | Command R+ and more |
 | DeepSeek | DeepSeek Chat, R1, and more |
 | Groq | Llama3, Mixtral, and more (fast inference) |
 | Perplexity | Web-connected AI models |
-| Together AI | Open-source model hosting |
+| Together | Open-source model hosting |
+
+Any other service can also be registered — just enter the service name and API key in `llm-proxy init`.
 
 ---
 
@@ -502,13 +562,20 @@ Common causes:
 - **Python not installed** → Install from [python.org](https://www.python.org/downloads/)
 - **Port already in use** → Run `llm-proxy init` and choose a different port (e.g. 4001)
 
-### Want to change an API key?
+### Want to add, update, or delete an API key?
+
+Stop the proxy, run `init`, then start again:
 
 ```bash
 llm-proxy stop
 llm-proxy init
 llm-proxy start
 ```
+
+In the `llm-proxy init` screen:
+- Type a service name → enter new key (add/update)
+- Type `d N` → delete that entry
+- Press Enter on empty → save and exit
 
 ---
 
