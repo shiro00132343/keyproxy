@@ -40,10 +40,11 @@ Macの場合：
 ### ステップ2：以下をコピーして貼り付けて、Enterを押す
 
 ```bash
-bash install.sh
+curl -fsSL https://raw.githubusercontent.com/shiro00132343/llm-proxy-run/main/install.sh | bash
 ```
 
 > ターミナルに文字を貼り付けるときは `Command（⌘）+ V` です。
+> このコマンドはGitHubからインストーラーをダウンロードして、そのまま実行します。
 
 インストールが完了すると、このような画面になります。
 

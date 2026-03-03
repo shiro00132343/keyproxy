@@ -5,7 +5,7 @@
 set -euo pipefail
 
 INSTALL_DIR="$HOME/.local/bin"
-SCRIPT_URL="https://raw.githubusercontent.com/YOUR_USERNAME/llm-proxy-run/main/llm-proxy"
+SCRIPT_URL="https://raw.githubusercontent.com/shiro00132343/llm-proxy-run/main/llm-proxy"
 SCRIPT_NAME="llm-proxy"
 
 RED='\033[0;31m'
