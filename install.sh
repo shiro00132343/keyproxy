@@ -6,6 +6,16 @@ set -euo pipefail
 
 INSTALL_DIR="$HOME/.local/bin"
 SCRIPT_URL="https://raw.githubusercontent.com/shiro00132343/llm-proxy-run/main/llm-proxy"
+# キャッシュバイパス用（GitHub API経由で最新コミットのSHAを取得してURLを構築）
+_get_latest_url() {
+  local sha
+  sha=$(curl -fsSL "https://api.github.com/repos/shiro00132343/llm-proxy-run/commits/main" 2>/dev/null | grep '"sha"' | head -1 | sed 's/.*"sha": *"\([^"]*\)".*/\1/')
+  if [ -n "$sha" ]; then
+    echo "https://raw.githubusercontent.com/shiro00132343/llm-proxy-run/${sha}/llm-proxy"
+  else
+    echo "$SCRIPT_URL"
+  fi
+}
 SCRIPT_NAME="llm-proxy"
 
 RED='\033[0;31m'
@@ -28,12 +38,13 @@ echo ""
 # インストール先ディレクトリを作成
 mkdir -p "$INSTALL_DIR"
 
-# GitHubから最新版をダウンロード
+# GitHubから最新版をダウンロード（キャッシュバイパスのためSHAを使用）
 info "llm-proxy の最新版をダウンロード中..."
+DOWNLOAD_URL=$(_get_latest_url)
 if command -v curl &>/dev/null; then
-  curl -fsSL "$SCRIPT_URL" -o "$INSTALL_DIR/$SCRIPT_NAME"
+  curl -fsSL "$DOWNLOAD_URL" -o "$INSTALL_DIR/$SCRIPT_NAME"
 elif command -v wget &>/dev/null; then
-  wget -q "$SCRIPT_URL" -O "$INSTALL_DIR/$SCRIPT_NAME"
+  wget -q "$DOWNLOAD_URL" -O "$INSTALL_DIR/$SCRIPT_NAME"
 else
   error "curl または wget が必要です。"
   exit 1
