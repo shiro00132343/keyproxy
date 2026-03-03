@@ -1,0 +1,531 @@
+#!/usr/bin/env bash
+# llm-proxy - APIキーを安全にキャッシュして、ローカルプロキシ経由でLLMにアクセスするツール
+# Usage: llm-proxy <command>
+#   init    - APIキーを設定する
+#   start   - プロキシをバックグラウンドで起動する
+#   stop    - プロキシを停止する
+#   status  - プロキシの状態を確認する
+#   env     - 設定すべき環境変数を表示する
+#   restart - プロキシを再起動する
+
+set -euo pipefail
+
+# ============================================================
+# 定数・設定
+# ============================================================
+CONFIG_DIR="$HOME/.llm-proxy"
+CONFIG_FILE="$CONFIG_DIR/config"
+LITELLM_CONFIG="$CONFIG_DIR/litellm-config.yaml"
+PID_FILE="$CONFIG_DIR/proxy.pid"
+LOG_FILE="$CONFIG_DIR/proxy.log"
+DEFAULT_PORT=4000
+DUMMY_API_KEY="sk-dummy-safe-proxy-key-0000"
+
+# ============================================================
+# カラー出力
+# ============================================================
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+RESET='\033[0m'
+
+info()    { echo -e "${BLUE}[INFO]${RESET} $*"; }
+success() { echo -e "${GREEN}[OK]${RESET} $*"; }
+warn()    { echo -e "${YELLOW}[WARN]${RESET} $*"; }
+error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
+header()  { echo -e "\n${BOLD}${CYAN}$*${RESET}"; }
+
+# ============================================================
+# ヘルパー関数
+# ============================================================
+
+# 設定ディレクトリを初期化（パーミッション700で作成）
+ensure_config_dir() {
+  if [ ! -d "$CONFIG_DIR" ]; then
+    mkdir -p "$CONFIG_DIR"
+    chmod 700 "$CONFIG_DIR"
+  fi
+}
+
+# 設定ファイルを読み込む
+load_config() {
+  if [ -f "$CONFIG_FILE" ]; then
+    # shellcheck source=/dev/null
+    source "$CONFIG_FILE"
+  fi
+}
+
+# LiteLLMがインストールされているか確認
+check_litellm() {
+  if ! command -v litellm &>/dev/null; then
+    warn "LiteLLMがインストールされていません。"
+    echo ""
+    read -r -p "今すぐインストールしますか？ [y/N]: " answer
+    if [[ "$answer" =~ ^[Yy]$ ]]; then
+      info "LiteLLMをインストール中..."
+      if command -v pip3 &>/dev/null; then
+        pip3 install 'litellm[proxy]' --quiet
+      elif command -v pip &>/dev/null; then
+        pip install 'litellm[proxy]' --quiet
+      else
+        error "pipが見つかりません。Pythonをインストールしてください。"
+        echo "  → https://www.python.org/downloads/"
+        exit 1
+      fi
+      success "LiteLLMのインストール完了"
+    else
+      error "LiteLLMが必要です。以下のコマンドでインストールしてください："
+      echo "  pip install 'litellm[proxy]'"
+      exit 1
+    fi
+  fi
+}
+
+# プロキシが起動中か確認
+is_running() {
+  if [ -f "$PID_FILE" ]; then
+    local pid
+    pid=$(cat "$PID_FILE")
+    if kill -0 "$pid" 2>/dev/null; then
+      return 0
+    else
+      # PIDファイルが残っているが、プロセスが死んでいる
+      rm -f "$PID_FILE"
+      return 1
+    fi
+  fi
+  return 1
+}
+
+# LiteLLM設定ファイルを生成する
+generate_litellm_config() {
+  load_config
+
+  if [ -z "${ANTHROPIC_API_KEY_REAL:-}" ]; then
+    error "APIキーが設定されていません。まず 'llm-proxy init' を実行してください。"
+    exit 1
+  fi
+
+  local port="${PROXY_PORT:-$DEFAULT_PORT}"
+
+  # モデルマッピングを構築
+  cat > "$LITELLM_CONFIG" << YAML
+# llm-proxy が自動生成した LiteLLM 設定ファイル
+# このファイルは ~/.llm-proxy/ に保存されており、プロジェクト外のため安全です
+
+model_list:
+YAML
+
+  # Anthropicキーが設定されている場合
+  if [ -n "${ANTHROPIC_API_KEY_REAL:-}" ]; then
+    cat >> "$LITELLM_CONFIG" << YAML
+  - model_name: claude-sonnet
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet-20241022
+      api_key: "${ANTHROPIC_API_KEY_REAL}"
+
+  - model_name: claude-haiku
+    litellm_params:
+      model: anthropic/claude-3-5-haiku-20241022
+      api_key: "${ANTHROPIC_API_KEY_REAL}"
+
+  - model_name: claude-opus
+    litellm_params:
+      model: anthropic/claude-3-opus-20240229
+      api_key: "${ANTHROPIC_API_KEY_REAL}"
+
+  - model_name: claude-3-5-sonnet-20241022
+    litellm_params:
+      model: anthropic/claude-3-5-sonnet-20241022
+      api_key: "${ANTHROPIC_API_KEY_REAL}"
+
+  - model_name: claude-3-5-haiku-20241022
+    litellm_params:
+      model: anthropic/claude-3-5-haiku-20241022
+      api_key: "${ANTHROPIC_API_KEY_REAL}"
+
+  - model_name: claude-opus-4-5
+    litellm_params:
+      model: anthropic/claude-opus-4-5
+      api_key: "${ANTHROPIC_API_KEY_REAL}"
+
+  - model_name: claude-sonnet-4-5
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5
+      api_key: "${ANTHROPIC_API_KEY_REAL}"
+
+  - model_name: claude-haiku-4-5-20251001
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: "${ANTHROPIC_API_KEY_REAL}"
+
+YAML
+  fi
+
+  # OpenAIキーが設定されている場合
+  if [ -n "${OPENAI_API_KEY_REAL:-}" ]; then
+    cat >> "$LITELLM_CONFIG" << YAML
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: "${OPENAI_API_KEY_REAL}"
+
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: "${OPENAI_API_KEY_REAL}"
+
+YAML
+  fi
+
+  # Google (Gemini) キーが設定されている場合
+  if [ -n "${GOOGLE_API_KEY_REAL:-}" ]; then
+    cat >> "$LITELLM_CONFIG" << YAML
+  - model_name: gemini-pro
+    litellm_params:
+      model: gemini/gemini-1.5-pro
+      api_key: "${GOOGLE_API_KEY_REAL}"
+
+YAML
+  fi
+
+  cat >> "$LITELLM_CONFIG" << YAML
+litellm_settings:
+  drop_params: true
+
+general_settings:
+  master_key: "${DUMMY_API_KEY}"
+YAML
+
+  chmod 600 "$LITELLM_CONFIG"
+}
+
+# ============================================================
+# コマンド: init
+# ============================================================
+cmd_init() {
+  header "llm-proxy セットアップ"
+  echo "APIキーをセキュアな場所（$CONFIG_DIR）に保存します。"
+  echo "プロジェクトの .env ファイルには一切書き込みません。"
+  echo ""
+
+  ensure_config_dir
+
+  load_config
+
+  # ポート設定
+  local current_port="${PROXY_PORT:-$DEFAULT_PORT}"
+  echo -n "プロキシのポート番号 [${current_port}]: "
+  read -r input_port
+  local port="${input_port:-$current_port}"
+
+  echo ""
+  echo "設定するAPIキーを選択してください（不要なものはそのままEnterでスキップ）"
+  echo ""
+
+  # Anthropic
+  echo -e "${BOLD}Anthropic (Claude)${RESET}"
+  if [ -n "${ANTHROPIC_API_KEY_REAL:-}" ]; then
+    local masked="${ANTHROPIC_API_KEY_REAL:0:10}...${ANTHROPIC_API_KEY_REAL: -4}"
+    echo "  現在の値: $masked"
+    echo -n "  新しいキー（変更しない場合はEnter）: "
+  else
+    echo -n "  APIキー（例: sk-ant-...）: "
+  fi
+  read -r -s input_anthropic
+  echo ""
+  local anthropic_key="${input_anthropic:-${ANTHROPIC_API_KEY_REAL:-}}"
+
+  # OpenAI
+  echo -e "${BOLD}OpenAI (GPT)${RESET}"
+  if [ -n "${OPENAI_API_KEY_REAL:-}" ]; then
+    local masked_oai="${OPENAI_API_KEY_REAL:0:7}...${OPENAI_API_KEY_REAL: -4}"
+    echo "  現在の値: $masked_oai"
+    echo -n "  新しいキー（変更しない場合はEnter）: "
+  else
+    echo -n "  APIキー（例: sk-...）[スキップする場合はEnter]: "
+  fi
+  read -r -s input_openai
+  echo ""
+  local openai_key="${input_openai:-${OPENAI_API_KEY_REAL:-}}"
+
+  # Google
+  echo -e "${BOLD}Google (Gemini)${RESET}"
+  if [ -n "${GOOGLE_API_KEY_REAL:-}" ]; then
+    local masked_ggl="${GOOGLE_API_KEY_REAL:0:7}...${GOOGLE_API_KEY_REAL: -4}"
+    echo "  現在の値: $masked_ggl"
+    echo -n "  新しいキー（変更しない場合はEnter）: "
+  else
+    echo -n "  APIキー [スキップする場合はEnter]: "
+  fi
+  read -r -s input_google
+  echo ""
+  local google_key="${input_google:-${GOOGLE_API_KEY_REAL:-}}"
+
+  if [ -z "$anthropic_key" ] && [ -z "$openai_key" ] && [ -z "$google_key" ]; then
+    error "少なくとも1つのAPIキーを設定してください。"
+    exit 1
+  fi
+
+  # 設定ファイルに保存
+  cat > "$CONFIG_FILE" << EOF
+# llm-proxy 設定ファイル
+# このファイルは $CONFIG_DIR に保存されています
+# パーミッション 600（本人のみ読み取り可能）に設定されています
+# .gitignore の対象外です（ホームディレクトリのため）
+
+PROXY_PORT=${port}
+ANTHROPIC_API_KEY_REAL=${anthropic_key}
+OPENAI_API_KEY_REAL=${openai_key}
+GOOGLE_API_KEY_REAL=${google_key}
+EOF
+  chmod 600 "$CONFIG_FILE"
+
+  # LiteLLM設定を生成
+  PROXY_PORT="$port"
+  ANTHROPIC_API_KEY_REAL="$anthropic_key"
+  OPENAI_API_KEY_REAL="$openai_key"
+  GOOGLE_API_KEY_REAL="$google_key"
+  generate_litellm_config
+
+  success "設定を保存しました: $CONFIG_FILE"
+  echo ""
+  info "次のコマンドでプロキシを起動できます："
+  echo "  llm-proxy start"
+}
+
+# ============================================================
+# コマンド: start
+# ============================================================
+cmd_start() {
+  load_config
+
+  if is_running; then
+    local pid
+    pid=$(cat "$PID_FILE")
+    warn "プロキシはすでに起動中です (PID: $pid, Port: ${PROXY_PORT:-$DEFAULT_PORT})"
+    return 0
+  fi
+
+  check_litellm
+
+  if [ ! -f "$CONFIG_FILE" ]; then
+    error "設定ファイルが見つかりません。まず 'llm-proxy init' を実行してください。"
+    exit 1
+  fi
+
+  # LiteLLM設定ファイルを再生成（キーが更新されていることもあるため）
+  generate_litellm_config
+
+  local port="${PROXY_PORT:-$DEFAULT_PORT}"
+
+  info "プロキシを起動中... (Port: $port)"
+
+  # バックグラウンドで起動
+  nohup litellm --config "$LITELLM_CONFIG" --port "$port" \
+    > "$LOG_FILE" 2>&1 &
+  local pid=$!
+  echo "$pid" > "$PID_FILE"
+
+  # 起動確認（最大10秒待つ）
+  local max_wait=10
+  local waited=0
+  while [ $waited -lt $max_wait ]; do
+    if curl -s "http://localhost:$port/health" &>/dev/null; then
+      success "プロキシが起動しました！"
+      echo ""
+      cmd_env
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+    echo -n "."
+  done
+  echo ""
+
+  # 起動失敗した場合
+  if ! is_running; then
+    error "プロキシの起動に失敗しました。ログを確認してください："
+    echo "  cat $LOG_FILE"
+    exit 1
+  fi
+
+  # プロセスは生きているが /health が応答しない場合も成功扱い
+  success "プロキシが起動しました (PID: $pid)"
+  echo ""
+  cmd_env
+}
+
+# ============================================================
+# コマンド: stop
+# ============================================================
+cmd_stop() {
+  if ! is_running; then
+    warn "プロキシは起動していません。"
+    return 0
+  fi
+
+  local pid
+  pid=$(cat "$PID_FILE")
+  info "プロキシを停止中... (PID: $pid)"
+  kill "$pid" 2>/dev/null || true
+  rm -f "$PID_FILE"
+  success "プロキシを停止しました。"
+}
+
+# ============================================================
+# コマンド: restart
+# ============================================================
+cmd_restart() {
+  cmd_stop
+  sleep 1
+  cmd_start
+}
+
+# ============================================================
+# コマンド: status
+# ============================================================
+cmd_status() {
+  load_config
+  local port="${PROXY_PORT:-$DEFAULT_PORT}"
+
+  header "llm-proxy ステータス"
+
+  if is_running; then
+    local pid
+    pid=$(cat "$PID_FILE")
+    success "起動中 (PID: $pid, Port: $port)"
+
+    # ヘルスチェック
+    if curl -s "http://localhost:$port/health" &>/dev/null; then
+      success "ヘルスチェック: 正常"
+    else
+      warn "ヘルスチェック: 応答なし（起動中の可能性あり）"
+    fi
+  else
+    warn "停止中"
+  fi
+
+  echo ""
+  echo "設定ファイル: $CONFIG_FILE"
+  echo "LiteLLM設定:  $LITELLM_CONFIG"
+  echo "ログファイル: $LOG_FILE"
+
+  if [ -f "$CONFIG_FILE" ]; then
+    echo ""
+    echo "登録済みAPIキー:"
+    if [ -n "${ANTHROPIC_API_KEY_REAL:-}" ]; then
+      local masked="${ANTHROPIC_API_KEY_REAL:0:10}...${ANTHROPIC_API_KEY_REAL: -4}"
+      echo "  Anthropic: $masked"
+    fi
+    if [ -n "${OPENAI_API_KEY_REAL:-}" ]; then
+      local masked="${OPENAI_API_KEY_REAL:0:7}...${OPENAI_API_KEY_REAL: -4}"
+      echo "  OpenAI:    $masked"
+    fi
+    if [ -n "${GOOGLE_API_KEY_REAL:-}" ]; then
+      local masked="${GOOGLE_API_KEY_REAL:0:7}...${GOOGLE_API_KEY_REAL: -4}"
+      echo "  Google:    $masked"
+    fi
+  fi
+}
+
+# ============================================================
+# コマンド: env
+# ============================================================
+cmd_env() {
+  load_config
+  local port="${PROXY_PORT:-$DEFAULT_PORT}"
+
+  header "環境変数の設定方法"
+  echo "以下をターミナルで実行（またはシェルの設定ファイルに追加）してください："
+  echo ""
+  echo -e "${YELLOW}# Anthropic (Claude Code, Antigravity など)${RESET}"
+  echo "export ANTHROPIC_BASE_URL=http://localhost:${port}"
+  echo "export ANTHROPIC_API_KEY=${DUMMY_API_KEY}"
+  echo ""
+  echo -e "${YELLOW}# OpenAI互換ツール${RESET}"
+  echo "export OPENAI_BASE_URL=http://localhost:${port}"
+  echo "export OPENAI_API_KEY=${DUMMY_API_KEY}"
+  echo ""
+  echo -e "${CYAN}# ワンライナー（コピペ用）${RESET}"
+  echo "export ANTHROPIC_BASE_URL=http://localhost:${port} ANTHROPIC_API_KEY=${DUMMY_API_KEY} OPENAI_BASE_URL=http://localhost:${port} OPENAI_API_KEY=${DUMMY_API_KEY}"
+  echo ""
+  echo -e "${BOLD}重要：${RESET} .env ファイルや .claude ファイルには本物のAPIキーを書かないでください。"
+  echo "         ダミーキー（${DUMMY_API_KEY}）のみ使用します。"
+}
+
+# ============================================================
+# コマンド: logs
+# ============================================================
+cmd_logs() {
+  if [ ! -f "$LOG_FILE" ]; then
+    warn "ログファイルが見つかりません: $LOG_FILE"
+    return 0
+  fi
+  tail -f "$LOG_FILE"
+}
+
+# ============================================================
+# コマンド: help
+# ============================================================
+cmd_help() {
+  cat << EOF
+
+${BOLD}llm-proxy${RESET} - APIキーを安全に管理するローカルLLMプロキシ
+
+${BOLD}使い方:${RESET}
+  llm-proxy <コマンド>
+
+${BOLD}コマンド:${RESET}
+  init      APIキーを安全な場所に設定する（初回 or キー変更時）
+  start     プロキシをバックグラウンドで起動する
+  stop      プロキシを停止する
+  restart   プロキシを再起動する
+  status    プロキシの状態を確認する
+  env       設定すべき環境変数を表示する
+  logs      プロキシのログをリアルタイムで表示する
+  help      このヘルプを表示する
+
+${BOLD}はじめかた:${RESET}
+  1. llm-proxy init    # APIキーを設定
+  2. llm-proxy start   # プロキシ起動
+  3. 表示された環境変数をシェルに設定
+  4. Claude Code / Antigravity などをそのまま使う
+
+${BOLD}セキュリティ:${RESET}
+  - 本物のAPIキーは $CONFIG_DIR に保存されます
+  - パーミッション 600（本人のみ読み取り可能）
+  - プロジェクトの .env には絶対に書き込みません
+  - ツールが読み取るのはダミーキーのみです
+
+EOF
+}
+
+# ============================================================
+# メイン処理
+# ============================================================
+main() {
+  local cmd="${1:-help}"
+  shift || true
+
+  case "$cmd" in
+    init)    cmd_init "$@" ;;
+    start)   cmd_start "$@" ;;
+    stop)    cmd_stop "$@" ;;
+    restart) cmd_restart "$@" ;;
+    status)  cmd_status "$@" ;;
+    env)     cmd_env "$@" ;;
+    logs)    cmd_logs "$@" ;;
+    help|--help|-h) cmd_help ;;
+    *)
+      error "不明なコマンド: $cmd"
+      cmd_help
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"
