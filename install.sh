@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# llm-proxy インストールスクリプト
+# keyproxy インストールスクリプト
 # 使い方: curl -fsSL https://raw.githubusercontent.com/.../install.sh | bash
 
 set -euo pipefail
 
 INSTALL_DIR="$HOME/.local/bin"
-SCRIPT_URL="https://raw.githubusercontent.com/shiro00132343/llm-proxy-run/main/llm-proxy"
+SCRIPT_URL="https://raw.githubusercontent.com/shiro00132343/llm-proxy-run/main/keyproxy"
 # キャッシュバイパス用（GitHub API経由で最新コミットのSHAを取得してURLを構築）
 _get_latest_url() {
   local sha
   sha=$(curl -fsSL "https://api.github.com/repos/shiro00132343/llm-proxy-run/commits/main" 2>/dev/null | grep '"sha"' | head -1 | sed 's/.*"sha": *"\([^"]*\)".*/\1/')
   if [ -n "$sha" ]; then
-    echo "https://raw.githubusercontent.com/shiro00132343/llm-proxy-run/${sha}/llm-proxy"
+    echo "https://raw.githubusercontent.com/shiro00132343/llm-proxy-run/${sha}/keyproxy"
   else
     echo "$SCRIPT_URL"
   fi
 }
-SCRIPT_NAME="llm-proxy"
+SCRIPT_NAME="keyproxy"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -31,7 +31,7 @@ warn()    { echo -e "${YELLOW}[WARN]${RESET} $*"; }
 error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
 
 echo ""
-echo -e "${BOLD}llm-proxy インストーラー${RESET}"
+echo -e "${BOLD}keyproxy インストーラー${RESET}"
 echo "========================================"
 echo ""
 
@@ -39,7 +39,7 @@ echo ""
 mkdir -p "$INSTALL_DIR"
 
 # GitHubから最新版をダウンロード（キャッシュバイパスのためSHAを使用）
-info "llm-proxy の最新版をダウンロード中..."
+info "keyproxy の最新版をダウンロード中..."
 DOWNLOAD_URL=$(_get_latest_url)
 if command -v curl &>/dev/null; then
   curl -fsSL "$DOWNLOAD_URL" -o "$INSTALL_DIR/$SCRIPT_NAME"
@@ -51,7 +51,7 @@ else
 fi
 
 chmod +x "$INSTALL_DIR/$SCRIPT_NAME"
-success "llm-proxy をインストールしました: $INSTALL_DIR/$SCRIPT_NAME"
+success "keyproxy をインストールしました: $INSTALL_DIR/$SCRIPT_NAME"
 
 # PATHの確認
 if echo "$PATH" | tr ':' '\n' | grep -q "^$INSTALL_DIR$"; then
@@ -90,7 +90,7 @@ else
   read -r -p "自動的に $SHELL_CONFIG に追加しますか？ [y/N]: " answer
   if [[ "$answer" =~ ^[Yy]$ ]]; then
     echo '' >> "$SHELL_CONFIG"
-    echo '# llm-proxy' >> "$SHELL_CONFIG"
+    echo '# keyproxy' >> "$SHELL_CONFIG"
     echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$SHELL_CONFIG"
     success "$SHELL_CONFIG に追加しました"
     echo ""
@@ -116,7 +116,7 @@ if command -v litellm &>/dev/null; then
   LITELLM_VERSION=$(litellm --version 2>&1 | head -1)
   success "LiteLLM: $LITELLM_VERSION（インストール済み）"
 else
-  warn "LiteLLMが見つかりません（'llm-proxy start' 時に自動インストールします）"
+  warn "LiteLLMが見つかりません（'keyproxy start' 時に自動インストールします）"
 fi
 
 echo ""
@@ -124,7 +124,7 @@ echo "========================================"
 success "インストール完了！"
 echo ""
 echo -e "${BOLD}次のステップ:${RESET}"
-echo "  1. llm-proxy init    # APIキーを設定する"
-echo "  2. llm-proxy start   # プロキシを起動する"
-echo "  3. llm-proxy env     # 環境変数の設定方法を確認する"
+echo "  1. keyproxy init    # APIキーを設定する"
+echo "  2. keyproxy start   # プロキシを起動する"
+echo "  3. keyproxy env     # 環境変数の設定方法を確認する"
 echo ""
