@@ -126,7 +126,7 @@ is_running() {
 generate_litellm_config() {
   load_config
 
-  # 1つもキーが設定されていないか確認
+  # 既知サービスまたはカスタムサービスのキーが1つでもあるか確認
   local any_key=0
   for svc in "${SERVICES[@]}"; do
     local env_var
@@ -136,6 +136,12 @@ generate_litellm_config() {
       break
     fi
   done
+  # カスタムキーも確認（_API_KEY_REAL で終わる変数が config にあるか）
+  if [ "$any_key" -eq 0 ] && [ -f "$CONFIG_FILE" ]; then
+    if grep -q '_API_KEY_REAL=' "$CONFIG_FILE"; then
+      any_key=1
+    fi
+  fi
 
   if [ "$any_key" -eq 0 ]; then
     error "APIキーが設定されていません。まず 'llm-proxy init' を実行してください。"
@@ -149,6 +155,7 @@ generate_litellm_config() {
 model_list:
 YAML
 
+  # 既知サービスの出力
   for svc in "${SERVICES[@]}"; do
     local env_var
     env_var=$(svc_env "$svc")
@@ -159,7 +166,6 @@ YAML
     local models_str
     models_str=$(svc_models "$svc")
 
-    # カンマ区切りのモデル定義をループ
     IFS=',' read -ra model_entries <<< "$models_str"
     for entry in "${model_entries[@]}"; do
       local model_name="${entry%%=*}"
@@ -173,6 +179,38 @@ YAML
 YAML
     done
   done
+
+  # カスタムサービスの出力（_BASE_URL と _MODEL が設定されているもの）
+  if [ -f "$CONFIG_FILE" ]; then
+    while IFS='=' read -r key val; do
+      # _API_KEY_REAL で終わるエントリを探す
+      case "$key" in *_API_KEY_REAL) ;; *) continue ;; esac
+      [ -z "$val" ] && continue
+      # 既知サービスはスキップ（上で出力済み）
+      _is_known_service "$key" && continue
+
+      local prefix="${key%_API_KEY_REAL}"
+      local base_url model_name
+      base_url=$(grep "^${prefix}_BASE_URL=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2- || true)
+      model_name=$(grep "^${prefix}_MODEL=" "$CONFIG_FILE" 2>/dev/null | cut -d= -f2- || true)
+
+      # BASE_URL と MODEL の両方がある場合のみ出力
+      [ -z "$base_url" ] && continue
+      [ -z "$model_name" ] && continue
+
+      local display_name
+      display_name=$(echo "$prefix" | tr 'A-Z' 'a-z')
+
+      cat >> "$LITELLM_CONFIG" << YAML
+  - model_name: ${display_name}/${model_name}
+    litellm_params:
+      model: openai/${model_name}
+      api_key: "${val}"
+      api_base: "${base_url}"
+
+YAML
+    done < "$CONFIG_FILE"
+  fi
 
   cat >> "$LITELLM_CONFIG" << YAML
 litellm_settings:
@@ -245,6 +283,8 @@ _show_registered_keys_numbered() {
   local n=0
   while IFS='=' read -r key val; do
     [ -z "$key" ] && continue
+    # _API_KEY_REAL のエントリのみ表示（_BASE_URL や _MODEL は除外）
+    case "$key" in *_API_KEY_REAL) ;; *) continue ;; esac
     n=$((n + 1))
     local svc_display="${key%_API_KEY_REAL}"
     local masked="${val:0:8}...${val: -4}"
@@ -312,16 +352,6 @@ cmd_init() {
     local env_var
     env_var=$(_name_to_env_var "$svc_name")
 
-    # 未知のサービスは警告を表示
-    if ! _is_known_service "$env_var"; then
-      warn "\"$svc_name\" はプロキシ対応サービスではありません。"
-      echo "  キーは保存されますが、llm-proxy 経由では使用できません。"
-      echo "  対応サービス一覧: llm-proxy services"
-      echo -n "  それでも保存しますか？ [y/N]: "
-      read -r confirm
-      [ "$confirm" != "y" ] && [ "$confirm" != "Y" ] && continue
-    fi
-
     local current_val
     current_val=$(grep "^${env_var}=" "$tmp_keys" 2>/dev/null | tail -1 | cut -d= -f2- || true)
 
@@ -341,6 +371,38 @@ cmd_init() {
       tmp2=$(mktemp)
       grep -v "^${env_var}=" "$tmp_keys" > "$tmp2" || true
       echo "${env_var}=${new_val}" >> "$tmp2"
+
+      # 未知のサービスはベースURLとモデル名も追加取得
+      if ! _is_known_service "$env_var"; then
+        local url_var="${env_var%_API_KEY_REAL}_BASE_URL"
+        local model_var="${env_var%_API_KEY_REAL}_MODEL"
+        local current_url current_model
+        current_url=$(grep "^${url_var}=" "$tmp_keys" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+        current_model=$(grep "^${model_var}=" "$tmp_keys" 2>/dev/null | tail -1 | cut -d= -f2- || true)
+
+        echo "  カスタムサービスの追加情報を入力してください。"
+        if [ -n "$current_url" ]; then
+          echo -n "  ベースURL [${current_url}]: "
+        else
+          echo -n "  ベースURL (例: http://localhost:11434/v1): "
+        fi
+        read -r input_url
+        local new_url="${input_url:-$current_url}"
+
+        if [ -n "$current_model" ]; then
+          echo -n "  モデル名 [${current_model}]: "
+        else
+          echo -n "  モデル名 (例: my-model): "
+        fi
+        read -r input_model
+        local new_model="${input_model:-$current_model}"
+
+        grep -v "^${url_var}=" "$tmp2" > "$tmp2.2" && mv "$tmp2.2" "$tmp2" || true
+        grep -v "^${model_var}=" "$tmp2" > "$tmp2.2" && mv "$tmp2.2" "$tmp2" || true
+        [ -n "$new_url" ]   && echo "${url_var}=${new_url}"     >> "$tmp2"
+        [ -n "$new_model" ] && echo "${model_var}=${new_model}" >> "$tmp2"
+      fi
+
       mv "$tmp2" "$tmp_keys"
       success "$svc_name を保存しました"
     fi
