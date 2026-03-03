@@ -207,8 +207,10 @@ cmd_init() {
   echo "不要なサービスはそのままEnterでスキップできます。"
   echo ""
 
-  # 各サービスのキーを収集
-  declare -A new_keys
+  # 各サービスのキーを収集して一時ファイルに保存（bash 3.2 互換）
+  local tmp_keys
+  tmp_keys=$(mktemp)
+
   for svc in "${SERVICES[@]}"; do
     local env_var name example
     env_var=$(svc_env "$svc")
@@ -226,20 +228,20 @@ cmd_init() {
     fi
     read -r -s input_key
     echo ""
-    new_keys["$env_var"]="${input_key:-$current_val}"
+    local new_val="${input_key:-$current_val}"
+    echo "${env_var}=${new_val}" >> "$tmp_keys"
   done
 
   # 1つも設定されていない場合はエラー
   local any_set=0
-  for svc in "${SERVICES[@]}"; do
-    local env_var
-    env_var=$(svc_env "$svc")
-    if [ -n "${new_keys[$env_var]:-}" ]; then
+  while IFS='=' read -r k v; do
+    if [ -n "$v" ]; then
       any_set=1
       break
     fi
-  done
+  done < "$tmp_keys"
   if [ "$any_set" -eq 0 ]; then
+    rm -f "$tmp_keys"
     error "少なくとも1つのAPIキーを設定してください。"
     exit 1
   fi
@@ -251,21 +253,14 @@ cmd_init() {
     echo "# パーミッション 600（本人のみ読み取り可能）に設定されています"
     echo ""
     echo "PROXY_PORT=${port}"
-    for svc in "${SERVICES[@]}"; do
-      local env_var
-      env_var=$(svc_env "$svc")
-      echo "${env_var}=${new_keys[$env_var]:-}"
-    done
+    cat "$tmp_keys"
   } > "$CONFIG_FILE"
   chmod 600 "$CONFIG_FILE"
+  rm -f "$tmp_keys"
 
   # 変数を現在のシェルに反映してからLiteLLM設定を生成
   PROXY_PORT="$port"
-  for svc in "${SERVICES[@]}"; do
-    local env_var
-    env_var=$(svc_env "$svc")
-    export "${env_var}=${new_keys[$env_var]:-}"
-  done
+  load_config
   generate_litellm_config
 
   success "設定を保存しました: $CONFIG_FILE"
