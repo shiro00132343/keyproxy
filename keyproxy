@@ -285,12 +285,23 @@ _show_registered_keys_numbered() {
   local n=0
   while IFS='=' read -r key val; do
     [ -z "$key" ] && continue
-    # _API_KEY_REAL のエントリのみ表示（_BASE_URL や _MODEL は除外）
-    case "$key" in *_API_KEY_REAL) ;; *) continue ;; esac
+    # _API_KEY_REAL / _PUBLIC_KEY_REAL / _SECRET_KEY_REAL のみ表示
+    local key_type=""
+    case "$key" in
+      *_API_KEY_REAL)    key_type="API" ;;
+      *_PUBLIC_KEY_REAL) key_type="PUBLIC" ;;
+      *_SECRET_KEY_REAL) key_type="SECRET" ;;
+      *) continue ;;
+    esac
     n=$((n + 1))
-    local svc_display="${key%_API_KEY_REAL}"
+    local svc_display
+    case "$key_type" in
+      API)    svc_display="${key%_API_KEY_REAL}" ;;
+      PUBLIC) svc_display="${key%_PUBLIC_KEY_REAL}" ;;
+      SECRET) svc_display="${key%_SECRET_KEY_REAL}" ;;
+    esac
     local masked="${val:0:8}...${val: -4}"
-    echo "  $n. $svc_display: $masked"
+    echo "  $n. [$key_type] $svc_display: $masked"
   done < "$file"
 }
 
@@ -316,7 +327,7 @@ cmd_init() {
   local tmp_keys
   tmp_keys=$(mktemp)
   if [ -f "$CONFIG_FILE" ]; then
-    grep '_API_KEY_REAL=' "$CONFIG_FILE" >> "$tmp_keys" || true
+    grep -E '_API_KEY_REAL=|_PUBLIC_KEY_REAL=|_SECRET_KEY_REAL=' "$CONFIG_FILE" >> "$tmp_keys" || true
   fi
 
   # メインループ: 追加・更新・削除
@@ -341,8 +352,11 @@ cmd_init() {
         tmp2=$(mktemp)
         grep -v "^${del_key}=" "$tmp_keys" > "$tmp2" || true
         mv "$tmp2" "$tmp_keys"
-        local svc_display="${del_key%_API_KEY_REAL}"
-        success "$svc_display を削除しました"
+        local svc_display="$del_key"
+        svc_display="${svc_display%_API_KEY_REAL}"
+        svc_display="${svc_display%_PUBLIC_KEY_REAL}"
+        svc_display="${svc_display%_SECRET_KEY_REAL}"
+        success "$svc_display ($del_key) を削除しました"
       else
         warn "番号 $del_num は存在しません"
       fi
@@ -351,8 +365,35 @@ cmd_init() {
 
     # それ以外 → サービス名として追加・更新
     local svc_name="$user_input"
-    local env_var
-    env_var=$(_name_to_env_var "$svc_name")
+    local upper_name
+    upper_name=$(printf '%s' "$svc_name" | tr 'a-z' 'A-Z' | tr -cs 'A-Z0-9' '_' | sed 's/^_*//' | sed 's/_*$//')
+
+    # キー種別を決定（既知LLMサービスはAPIキー固定、それ以外は選択）
+    local key_suffix key_label
+    local env_var_base
+    env_var_base=$(_name_to_env_var "$svc_name")
+    env_var_base="${env_var_base%_API_KEY_REAL}"
+
+    if _is_known_service "${env_var_base}_API_KEY_REAL"; then
+      # 既知LLMサービス → APIキー固定
+      key_suffix="_API_KEY_REAL"
+      key_label="APIキー"
+    else
+      # 未知サービス → 種別選択
+      echo "  キーの種別を選んでください:"
+      echo "    1) APIキー         → ${upper_name}_API_KEY_REAL"
+      echo "    2) 公開鍵 (public) → ${upper_name}_PUBLIC_KEY_REAL"
+      echo "    3) 秘密鍵 (secret) → ${upper_name}_SECRET_KEY_REAL"
+      echo -n "  選択 [1]: "
+      read -r key_type_input
+      case "${key_type_input:-1}" in
+        2) key_suffix="_PUBLIC_KEY_REAL"; key_label="公開鍵" ;;
+        3) key_suffix="_SECRET_KEY_REAL"; key_label="秘密鍵" ;;
+        *) key_suffix="_API_KEY_REAL";    key_label="APIキー" ;;
+      esac
+    fi
+
+    local env_var="${env_var_base}${key_suffix}"
 
     local current_val
     current_val=$(grep "^${env_var}=" "$tmp_keys" 2>/dev/null | tail -1 | cut -d= -f2- || true)
@@ -360,9 +401,9 @@ cmd_init() {
     if [ -n "$current_val" ]; then
       local masked="${current_val:0:8}...${current_val: -4}"
       echo "  現在の値: $masked"
-      echo -n "  新しいAPIキー (変更しない場合はEnter): "
+      echo -n "  新しい${key_label} (変更しない場合はEnter): "
     else
-      echo -n "  APIキー: "
+      echo -n "  ${key_label}: "
     fi
     read -r -s input_key
     echo ""
@@ -374,19 +415,20 @@ cmd_init() {
       grep -v "^${env_var}=" "$tmp_keys" > "$tmp2" || true
       echo "${env_var}=${new_val}" >> "$tmp2"
 
-      # 未知のサービスはベースURLとモデル名も追加取得
-      if ! _is_known_service "$env_var"; then
-        local url_var="${env_var%_API_KEY_REAL}_BASE_URL"
-        local model_var="${env_var%_API_KEY_REAL}_MODEL"
+      # APIキー かつ 未知のサービスはベースURLとモデル名も追加取得
+      if [ "$key_suffix" = "_API_KEY_REAL" ] && ! _is_known_service "$env_var"; then
+        local url_var="${env_var_base}_BASE_URL"
+        local model_var="${env_var_base}_MODEL"
         local current_url current_model
         current_url=$(grep "^${url_var}=" "$tmp_keys" 2>/dev/null | tail -1 | cut -d= -f2- || true)
         current_model=$(grep "^${model_var}=" "$tmp_keys" 2>/dev/null | tail -1 | cut -d= -f2- || true)
 
-        echo "  カスタムサービスの追加情報を入力してください。"
+        echo "  LLMプロキシとして使う場合はURLとモデル名を入力してください。"
+        echo "  （不要な場合はEnterをスキップ）"
         if [ -n "$current_url" ]; then
           echo -n "  ベースURL [${current_url}]: "
         else
-          echo -n "  ベースURL (例: http://localhost:11434/v1): "
+          echo -n "  ベースURL (例: https://openrouter.ai/api/v1): "
         fi
         read -r input_url
         local new_url="${input_url:-$current_url}"
@@ -394,7 +436,7 @@ cmd_init() {
         if [ -n "$current_model" ]; then
           echo -n "  モデル名 [${current_model}]: "
         else
-          echo -n "  モデル名 (例: my-model): "
+          echo -n "  モデル名 (例: google/gemma-3-4b-it:free): "
         fi
         read -r input_model
         local new_model="${input_model:-$current_model}"
@@ -406,7 +448,7 @@ cmd_init() {
       fi
 
       mv "$tmp2" "$tmp_keys"
-      success "$svc_name を保存しました"
+      success "$svc_name ($key_label) を保存しました → $env_var"
     fi
   done
 
