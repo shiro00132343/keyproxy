@@ -223,6 +223,17 @@ _name_to_env_var() {
   echo "${upper}_API_KEY_REAL"
 }
 
+# 環境変数名が SERVICES 配列に含まれるか確認（プロキシ経由で使えるか）
+_is_known_service() {
+  local env_var="$1"
+  for svc in "${SERVICES[@]}"; do
+    if [ "$(svc_env "$svc")" = "$env_var" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 # 登録済みAPIキーを番号付きで表示（作業用tmpファイルから読む）
 _show_registered_keys_numbered() {
   local file="$1"
@@ -300,6 +311,16 @@ cmd_init() {
     local svc_name="$user_input"
     local env_var
     env_var=$(_name_to_env_var "$svc_name")
+
+    # 未知のサービスは警告を表示
+    if ! _is_known_service "$env_var"; then
+      warn "\"$svc_name\" はプロキシ対応サービスではありません。"
+      echo "  キーは保存されますが、llm-proxy 経由では使用できません。"
+      echo "  対応サービス一覧: llm-proxy services"
+      echo -n "  それでも保存しますか？ [y/N]: "
+      read -r confirm
+      [ "$confirm" != "y" ] && [ "$confirm" != "Y" ] && continue
+    fi
 
     local current_val
     current_val=$(grep "^${env_var}=" "$tmp_keys" 2>/dev/null | tail -1 | cut -d= -f2- || true)
