@@ -190,7 +190,7 @@ YAML
 # ============================================================
 cmd_init() {
   header "llm-proxy セットアップ"
-  echo "APIキーをセキュアな場所（$CONFIG_DIR）に保存します。"
+  echo "APIキーをセキュアな場所 [$CONFIG_DIR] に保存します。"
   echo "プロジェクトの .env ファイルには一切書き込みません。"
   echo ""
 
@@ -226,7 +226,7 @@ cmd_init() {
       echo "  現在の値: $masked"
       echo -n "  新しいキー（変更しない場合はEnter）: "
     else
-      echo -n "  APIキー（例: ${example}）[スキップする場合はEnter]: "
+      echo -n "  APIキー (例: ${example}) [スキップする場合はEnter]: "
     fi
     read -r -s input_key
     echo ""
@@ -422,7 +422,7 @@ cmd_env() {
   echo "export ANTHROPIC_BASE_URL=http://localhost:${port} ANTHROPIC_API_KEY=${DUMMY_API_KEY} OPENAI_BASE_URL=http://localhost:${port} OPENAI_API_KEY=${DUMMY_API_KEY}"
   echo ""
   echo -e "${BOLD}重要：${RESET} .env ファイルや .claude ファイルには本物のAPIキーを書かないでください。"
-  echo "         ダミーキー（${DUMMY_API_KEY}）のみ使用します。"
+  echo "         ダミーキー [${DUMMY_API_KEY}] のみ使用します。"
 }
 
 # ============================================================
